@@ -6,6 +6,8 @@ DEFAULT_DEVICE = "/dev/video4"
 CTRL_NAME = "white_balance_temperature"
 AUTO_CTRL = "white_balance_automatic"
 SATURATION_CTRL = "saturation"
+AUTO_EXPOSURE_CTRL = "auto_exposure"
+EXPOSURE_TIME_CTRL = "exposure_time_absolute"
 
 def have_v4l2ctl():
     return shutil.which("v4l2-ctl") is not None
@@ -38,7 +40,10 @@ def get_ctrl_value(dev, ctrl):
     rc, out, err = run_cmd(["v4l2-ctl", "--device", dev, f"--get-ctrl={ctrl}"])
     # Output like: white_balance_temperature=4000
     if rc == 0:
-        m = out[out.rindex(':')+1:]
+        # 'auto_exposure: 3 (Aperture Priority Mode)' -> '3'
+        # 'brightness: 128' -> '128'
+        # etc
+        m = ''.join(filter(str.isdigit, out[out.rindex(':')+1:]))
         if m:
             return int(m)
     return None
@@ -53,7 +58,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("V4L2 Control GUI")
-        self.geometry("420x300")  # Increased height for new control
+        self.geometry("420x400")  # Increased height for new controls
         self.resizable(False, False)
 
         if not have_v4l2ctl():
@@ -96,6 +101,40 @@ class App(tk.Tk):
         self.sat_label = ttk.Label(frm, text="128")
         self.sat_label.grid(row=7, column=0, columnspan=3, sticky="w", pady=(6,0))
 
+        # Auto Exposure radio buttons (only 1 and 3 are valid values)
+        ttk.Label(frm, text="Auto Exposure").grid(row=8, column=0, columnspan=3, sticky="w", pady=(12,2))
+        self.exp_auto_var = tk.IntVar(value=3)  # Default to Auto mode
+        self.exp_auto_frame = ttk.Frame(frm)
+        self.exp_auto_frame.grid(row=9, column=0, columnspan=3, sticky="w")
+
+        # Radio button for Manual (value 1)
+        ttk.Radiobutton(
+            self.exp_auto_frame,
+            text="Manual",
+            variable=self.exp_auto_var,
+            value=1,
+            command=self.on_auto_exposure_change
+        ).pack(side="left", padx=(0, 20))
+
+        # Radio button for Auto (value 3)
+        ttk.Radiobutton(
+            self.exp_auto_frame,
+            text="Auto",
+            variable=self.exp_auto_var,
+            value=3,
+            command=self.on_auto_exposure_change
+        ).pack(side="left")
+
+        # Exposure Time slider
+        ttk.Label(frm, text="Exposure Time").grid(row=10, column=0, columnspan=3, sticky="w", pady=(12,2))
+        self.exp_time_var = tk.IntVar(value=500)  # Default from example
+        self.exp_time_scale = ttk.Scale(frm, from_=3, to=2047, orient="horizontal", command=self.on_exp_time_move)
+        self.exp_time_scale.grid(row=11, column=0, columnspan=3, sticky="ew")
+
+        # Exposure Time current value display
+        self.exp_time_label = ttk.Label(frm, text="500")
+        self.exp_time_label.grid(row=12, column=0, columnspan=3, sticky="w", pady=(6,0))
+
         frm.columnconfigure(1, weight=1)
 
         # Status bar
@@ -104,6 +143,7 @@ class App(tk.Tk):
 
         self._pending_apply = None  # for debouncing white balance slider
         self._pending_sat_apply = None  # for debouncing saturation slider
+        self._pending_exp_time_apply = None  # for debouncing exposure time slider
         self.load_device()
 
     def load_device(self):
@@ -135,6 +175,16 @@ class App(tk.Tk):
             self.sat_var.set(sat_val)
             self.sat_scale.set(sat_val)
             self.sat_label.configure(text=f"{sat_val}")
+        # Auto exposure: read and update UI elements
+        exp_auto = get_ctrl_value(dev, AUTO_EXPOSURE_CTRL)
+        if exp_auto is not None:
+            self.exp_auto_var.set(exp_auto)
+            # Exposure time is typically read-only in auto mode, but we can display its current value
+            exp_time_val = get_ctrl_value(dev, EXPOSURE_TIME_CTRL)
+            if exp_time_val is not None:
+                self.exp_time_var.set(exp_time_val)
+                self.exp_time_scale.set(exp_time_val)
+                self.exp_time_label.configure(text=f"{exp_time_val}")
         self.set_status(f"Loaded {dev} (range {minv}–{maxv}, step {step}, default {default})")
 
     def on_auto_toggle(self):
@@ -200,6 +250,37 @@ class App(tk.Tk):
             self.set_status(f"Error: {err or out}")
         else:
             self.set_status(f"Set {SATURATION_CTRL}={v}")
+
+    def on_auto_exposure_change(self):
+        dev = self.dev_var.get().strip()
+        mode = self.exp_auto_var.get()
+        rc, out, err = set_ctrl(dev, AUTO_EXPOSURE_CTRL, mode)
+        if rc != 0:
+            messagebox.showerror("Error", f"Failed to set {AUTO_EXPOSURE_CTRL}={mode}:\n{err or out}")
+            # Revert
+            cur_mode = get_ctrl_value(dev, AUTO_EXPOSURE_CTRL)
+            self.exp_auto_var.set(cur_mode if cur_mode is not None else 3)
+        self.set_status(f"{AUTO_EXPOSURE_CTRL} set to {mode}")
+
+    def on_exp_time_move(self, _evt=None):
+        v = int(float(self.exp_time_scale.get()))
+        self.exp_time_label.configure(text=f"{v}")
+        # Debounce apply (apply 150ms after last move)
+        if self._pending_exp_time_apply is not None:
+            self.after_cancel(self._pending_exp_time_apply)
+        self._pending_exp_time_apply = self.after(150, self.apply_exposure_time)
+
+    def apply_exposure_time(self):
+        self._pending_exp_time_apply = None
+        dev = self.dev_var.get().strip()
+        v = int(float(self.exp_time_scale.get()))
+
+        # Set the exposure time
+        rc, out, err = set_ctrl(dev, EXPOSURE_TIME_CTRL, v)
+        if rc != 0:
+            self.set_status(f"Error: {err or out}")
+        else:
+            self.set_status(f"Set {EXPOSURE_TIME_CTRL}={v}")
 
     def set_status(self, msg):
         self.status.configure(text=msg)
