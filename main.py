@@ -2,6 +2,13 @@
 import subprocess, sys, re, shutil, tkinter as tk
 from tkinter import ttk, messagebox
 
+# todo: make box wider and longer
+# todo: add zoom and sharpness controls
+# todo: add brightness and contrast controls
+# todo: on startup, set auto_whitebalance off if it's on, then set white_balance_temperature to current slider value
+# todo: add a refresh button to reset the above in case the camera was reloaded
+# todo: make saturation a switch for regular vs black-and-white mode
+
 DEFAULT_DEVICE = "/dev/video4"
 CTRL_NAME = "white_balance_temperature"
 AUTO_CTRL = "white_balance_automatic"
@@ -58,8 +65,11 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("V4L2 Control GUI")
-        self.geometry("420x400")  # Increased height for new controls
+        self.geometry("640x420")  # Increased height for new controls
         self.resizable(False, False)
+        self.style = ttk.Style(self)
+        # Larger slider handle to make grabbing easier with the mouse
+        self.style.configure("Thick.Horizontal.TScale", sliderlength=32)
 
         if not have_v4l2ctl():
             messagebox.showerror("Missing v4l2-ctl", "Install v4l-utils first: sudo apt install v4l-utils")
@@ -84,7 +94,15 @@ class App(tk.Tk):
         # White balance temperature slider
         ttk.Label(frm, text="White balance temperature").grid(row=2, column=0, columnspan=3, sticky="w", pady=(12,2))
         self.scale_var = tk.IntVar(value=4000)
-        self.scale = ttk.Scale(frm, from_=2000, to=10000, orient="horizontal", command=self.on_scale_move)
+        self.scale = ttk.Scale(
+            frm,
+            from_=2000,
+            to=10000,
+            orient="horizontal",
+            command=self.on_scale_move,
+            style="Thick.Horizontal.TScale",
+            length=360,
+        )
         self.scale.grid(row=3, column=0, columnspan=3, sticky="ew")
 
         # White balance temperature current value display
@@ -94,7 +112,15 @@ class App(tk.Tk):
         # Saturation slider
         ttk.Label(frm, text="Saturation").grid(row=5, column=0, columnspan=3, sticky="w", pady=(12,2))
         self.sat_var = tk.IntVar(value=128)  # Default value of 128
-        self.sat_scale = ttk.Scale(frm, from_=0, to=255, orient="horizontal", command=self.on_sat_scale_move)
+        self.sat_scale = ttk.Scale(
+            frm,
+            from_=0,
+            to=255,
+            orient="horizontal",
+            command=self.on_sat_scale_move,
+            style="Thick.Horizontal.TScale",
+            length=360,
+        )
         self.sat_scale.grid(row=6, column=0, columnspan=3, sticky="ew")
 
         # Saturation current value display
@@ -128,7 +154,15 @@ class App(tk.Tk):
         # Exposure Time slider
         ttk.Label(frm, text="Exposure Time").grid(row=10, column=0, columnspan=3, sticky="w", pady=(12,2))
         self.exp_time_var = tk.IntVar(value=500)  # Default from example
-        self.exp_time_scale = ttk.Scale(frm, from_=3, to=2047, orient="horizontal", command=self.on_exp_time_move)
+        self.exp_time_scale = ttk.Scale(
+            frm,
+            from_=3,
+            to=2047,
+            orient="horizontal",
+            command=self.on_exp_time_move,
+            style="Thick.Horizontal.TScale",
+            length=360,
+        )
         self.exp_time_scale.grid(row=11, column=0, columnspan=3, sticky="ew")
 
         # Exposure Time current value display
