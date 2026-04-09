@@ -4,7 +4,7 @@ from tkinter import ttk, messagebox
 
 # todo: make box wider and longer
 # todo: add zoom and sharpness controls
-# todo: add brightness and contrast controls
+# todo: add brightness controls
 # todo: on startup, set auto_whitebalance off if it's on, then set white_balance_temperature to current slider value
 # todo: add a refresh button to reset the above in case the camera was reloaded
 # todo: make saturation a switch for regular vs black-and-white mode
@@ -13,8 +13,11 @@ DEFAULT_DEVICE = "/dev/video4"
 CTRL_NAME = "white_balance_temperature"
 AUTO_CTRL = "white_balance_automatic"
 SATURATION_CTRL = "saturation"
+CONTRAST_CTRL = "contrast"
 AUTO_EXPOSURE_CTRL = "auto_exposure"
 EXPOSURE_TIME_CTRL = "exposure_time_absolute"
+EXPOSURE_DYN_FPS_CTRL = "exposure_dynamic_framerate"
+GAIN_CTRL = "gain"
 
 def have_v4l2ctl():
     return shutil.which("v4l2-ctl") is not None
@@ -65,7 +68,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("V4L2 Control GUI")
-        self.geometry("640x420")  # Increased height for new controls
+        self.geometry("640x560")  # Increased height for gain control
         self.resizable(False, False)
         self.style = ttk.Style(self)
         # Larger slider handle to make grabbing easier with the mouse
@@ -127,11 +130,29 @@ class App(tk.Tk):
         self.sat_label = ttk.Label(frm, text="128")
         self.sat_label.grid(row=7, column=0, columnspan=3, sticky="w", pady=(6,0))
 
+        # Contrast slider
+        ttk.Label(frm, text="Contrast").grid(row=8, column=0, columnspan=3, sticky="w", pady=(12,2))
+        self.contrast_var = tk.IntVar(value=128)  # Default value of 128
+        self.contrast_scale = ttk.Scale(
+            frm,
+            from_=0,
+            to=255,
+            orient="horizontal",
+            command=self.on_contrast_scale_move,
+            style="Thick.Horizontal.TScale",
+            length=360,
+        )
+        self.contrast_scale.grid(row=9, column=0, columnspan=3, sticky="ew")
+
+        # Contrast current value display
+        self.contrast_label = ttk.Label(frm, text="128")
+        self.contrast_label.grid(row=10, column=0, columnspan=3, sticky="w", pady=(6,0))
+
         # Auto Exposure radio buttons (only 1 and 3 are valid values)
-        ttk.Label(frm, text="Auto Exposure").grid(row=8, column=0, columnspan=3, sticky="w", pady=(12,2))
+        ttk.Label(frm, text="Auto Exposure").grid(row=11, column=0, columnspan=3, sticky="w", pady=(12,2))
         self.exp_auto_var = tk.IntVar(value=3)  # Default to Auto mode
         self.exp_auto_frame = ttk.Frame(frm)
-        self.exp_auto_frame.grid(row=9, column=0, columnspan=3, sticky="w")
+        self.exp_auto_frame.grid(row=12, column=0, columnspan=3, sticky="w")
 
         # Radio button for Manual (value 1)
         ttk.Radiobutton(
@@ -152,7 +173,7 @@ class App(tk.Tk):
         ).pack(side="left")
 
         # Exposure Time slider
-        ttk.Label(frm, text="Exposure Time").grid(row=10, column=0, columnspan=3, sticky="w", pady=(12,2))
+        ttk.Label(frm, text="Exposure Time").grid(row=13, column=0, columnspan=3, sticky="w", pady=(12,2))
         self.exp_time_var = tk.IntVar(value=500)  # Default from example
         self.exp_time_scale = ttk.Scale(
             frm,
@@ -163,11 +184,38 @@ class App(tk.Tk):
             style="Thick.Horizontal.TScale",
             length=360,
         )
-        self.exp_time_scale.grid(row=11, column=0, columnspan=3, sticky="ew")
+        self.exp_time_scale.grid(row=14, column=0, columnspan=3, sticky="ew")
 
         # Exposure Time current value display
         self.exp_time_label = ttk.Label(frm, text="500")
-        self.exp_time_label.grid(row=12, column=0, columnspan=3, sticky="w", pady=(6,0))
+        self.exp_time_label.grid(row=15, column=0, columnspan=3, sticky="w", pady=(6,0))
+
+        # Exposure Dynamic Framerate toggle
+        self.exp_dyn_fps_var = tk.BooleanVar(value=False)
+        self.exp_dyn_fps_check = ttk.Checkbutton(
+            frm, text="Exposure dynamic framerate",
+            variable=self.exp_dyn_fps_var,
+            command=self.on_exp_dyn_fps_toggle
+        )
+        self.exp_dyn_fps_check.grid(row=16, column=0, columnspan=3, sticky="w", pady=(12,0))
+
+        # Gain slider
+        ttk.Label(frm, text="Gain").grid(row=17, column=0, columnspan=3, sticky="w", pady=(12,2))
+        self.gain_var = tk.IntVar(value=0)
+        self.gain_scale = ttk.Scale(
+            frm,
+            from_=0,
+            to=255,
+            orient="horizontal",
+            command=self.on_gain_scale_move,
+            style="Thick.Horizontal.TScale",
+            length=360,
+        )
+        self.gain_scale.grid(row=18, column=0, columnspan=3, sticky="ew")
+
+        # Gain current value display
+        self.gain_label = ttk.Label(frm, text="0")
+        self.gain_label.grid(row=19, column=0, columnspan=3, sticky="w", pady=(6,0))
 
         frm.columnconfigure(1, weight=1)
 
@@ -177,7 +225,9 @@ class App(tk.Tk):
 
         self._pending_apply = None  # for debouncing white balance slider
         self._pending_sat_apply = None  # for debouncing saturation slider
+        self._pending_contrast_apply = None  # for debouncing contrast slider
         self._pending_exp_time_apply = None  # for debouncing exposure time slider
+        self._pending_gain_apply = None  # for debouncing gain slider
         self.load_device()
 
     def load_device(self):
@@ -209,6 +259,14 @@ class App(tk.Tk):
             self.sat_var.set(sat_val)
             self.sat_scale.set(sat_val)
             self.sat_label.configure(text=f"{sat_val}")
+
+        # Contrast range (0-255) is static, but we may want to read current value
+        contrast_val = get_ctrl_value(dev, CONTRAST_CTRL)
+        if contrast_val is not None:
+            self.contrast_var.set(contrast_val)
+            self.contrast_scale.set(contrast_val)
+            self.contrast_label.configure(text=f"{contrast_val}")
+
         # Auto exposure: read and update UI elements
         exp_auto = get_ctrl_value(dev, AUTO_EXPOSURE_CTRL)
         if exp_auto is not None:
@@ -219,6 +277,19 @@ class App(tk.Tk):
                 self.exp_time_var.set(exp_time_val)
                 self.exp_time_scale.set(exp_time_val)
                 self.exp_time_label.configure(text=f"{exp_time_val}")
+
+        # Exposure dynamic framerate: read and update checkbox
+        exp_dyn_fps = get_ctrl_value(dev, EXPOSURE_DYN_FPS_CTRL)
+        if exp_dyn_fps is not None:
+            self.exp_dyn_fps_var.set(bool(exp_dyn_fps))
+
+        # Gain: read and update slider
+        gain_val = get_ctrl_value(dev, GAIN_CTRL)
+        if gain_val is not None:
+            self.gain_var.set(gain_val)
+            self.gain_scale.set(gain_val)
+            self.gain_label.configure(text=f"{gain_val}")
+
         self.set_status(f"Loaded {dev} (range {minv}–{maxv}, step {step}, default {default})")
 
     def on_auto_toggle(self):
@@ -285,6 +356,26 @@ class App(tk.Tk):
         else:
             self.set_status(f"Set {SATURATION_CTRL}={v}")
 
+    def on_contrast_scale_move(self, _evt=None):
+        v = int(float(self.contrast_scale.get()))
+        self.contrast_label.configure(text=f"{v}")
+        # Debounce apply (apply 150ms after last move)
+        if self._pending_contrast_apply is not None:
+            self.after_cancel(self._pending_contrast_apply)
+        self._pending_contrast_apply = self.after(150, self.apply_contrast)
+
+    def apply_contrast(self):
+        self._pending_contrast_apply = None
+        dev = self.dev_var.get().strip()
+        v = int(float(self.contrast_scale.get()))
+
+        # Set the contrast
+        rc, out, err = set_ctrl(dev, CONTRAST_CTRL, v)
+        if rc != 0:
+            self.set_status(f"Error: {err or out}")
+        else:
+            self.set_status(f"Set {CONTRAST_CTRL}={v}")
+
     def on_auto_exposure_change(self):
         dev = self.dev_var.get().strip()
         mode = self.exp_auto_var.get()
@@ -315,6 +406,37 @@ class App(tk.Tk):
             self.set_status(f"Error: {err or out}")
         else:
             self.set_status(f"Set {EXPOSURE_TIME_CTRL}={v}")
+
+    def on_exp_dyn_fps_toggle(self):
+        dev = self.dev_var.get().strip()
+        enabled = self.exp_dyn_fps_var.get()
+        rc, out, err = set_ctrl_bool(dev, EXPOSURE_DYN_FPS_CTRL, enabled)
+        if rc != 0:
+            messagebox.showerror("Error", f"Failed to set {EXPOSURE_DYN_FPS_CTRL}={int(enabled)}:\n{err or out}")
+            # Revert
+            cur = get_ctrl_value(dev, EXPOSURE_DYN_FPS_CTRL)
+            self.exp_dyn_fps_var.set(bool(cur) if cur is not None else False)
+        self.set_status(f"{EXPOSURE_DYN_FPS_CTRL} set to {int(enabled)}")
+
+    def on_gain_scale_move(self, _evt=None):
+        v = int(float(self.gain_scale.get()))
+        self.gain_label.configure(text=f"{v}")
+        # Debounce apply (apply 150ms after last move)
+        if self._pending_gain_apply is not None:
+            self.after_cancel(self._pending_gain_apply)
+        self._pending_gain_apply = self.after(150, self.apply_gain)
+
+    def apply_gain(self):
+        self._pending_gain_apply = None
+        dev = self.dev_var.get().strip()
+        v = int(float(self.gain_scale.get()))
+
+        # Set the gain
+        rc, out, err = set_ctrl(dev, GAIN_CTRL, v)
+        if rc != 0:
+            self.set_status(f"Error: {err or out}")
+        else:
+            self.set_status(f"Set {GAIN_CTRL}={v}")
 
     def set_status(self, msg):
         self.status.configure(text=msg)
