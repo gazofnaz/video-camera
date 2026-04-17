@@ -93,8 +93,11 @@ class App(tk.Tk):
         # White balance temperature slider
         ttk.Label(frm, text="White balance temperature").grid(row=2, column=0, columnspan=3, sticky="w", pady=(12,2))
         self.scale_var = tk.IntVar(value=4000)
+        wb_row = ttk.Frame(frm)
+        wb_row.grid(row=3, column=0, columnspan=3, sticky="ew")
+        ttk.Button(wb_row, text="−", width=3, command=lambda: self._nudge_scale(self.scale, -100)).pack(side="left")
         self.scale = ttk.Scale(
-            frm,
+            wb_row,
             from_=2000,
             to=10000,
             orient="horizontal",
@@ -102,7 +105,8 @@ class App(tk.Tk):
             style="Thick.Horizontal.TScale",
             length=360,
         )
-        self.scale.grid(row=3, column=0, columnspan=3, sticky="ew")
+        self.scale.pack(side="left", fill="x", expand=True)
+        ttk.Button(wb_row, text="+", width=3, command=lambda: self._nudge_scale(self.scale, 100)).pack(side="left")
 
         # White balance temperature current value display
         self.val_label = ttk.Label(frm, text="4000 K")
@@ -110,9 +114,12 @@ class App(tk.Tk):
 
         # Saturation slider
         ttk.Label(frm, text="Saturation").grid(row=5, column=0, columnspan=3, sticky="w", pady=(12,2))
-        self.sat_var = tk.IntVar(value=128)  # Default value of 128
+        self.sat_var = tk.IntVar(value=128)
+        sat_row = ttk.Frame(frm)
+        sat_row.grid(row=6, column=0, columnspan=3, sticky="ew")
+        ttk.Button(sat_row, text="−", width=3, command=lambda: self._nudge_scale(self.sat_scale, -10)).pack(side="left")
         self.sat_scale = ttk.Scale(
-            frm,
+            sat_row,
             from_=0,
             to=255,
             orient="horizontal",
@@ -120,7 +127,8 @@ class App(tk.Tk):
             style="Thick.Horizontal.TScale",
             length=360,
         )
-        self.sat_scale.grid(row=6, column=0, columnspan=3, sticky="ew")
+        self.sat_scale.pack(side="left", fill="x", expand=True)
+        ttk.Button(sat_row, text="+", width=3, command=lambda: self._nudge_scale(self.sat_scale, 10)).pack(side="left")
 
         # Saturation current value display
         self.sat_label = ttk.Label(frm, text="128")
@@ -128,9 +136,12 @@ class App(tk.Tk):
 
         # Contrast slider
         ttk.Label(frm, text="Contrast").grid(row=8, column=0, columnspan=3, sticky="w", pady=(12,2))
-        self.contrast_var = tk.IntVar(value=128)  # Default value of 128
+        self.contrast_var = tk.IntVar(value=128)
+        con_row = ttk.Frame(frm)
+        con_row.grid(row=9, column=0, columnspan=3, sticky="ew")
+        ttk.Button(con_row, text="−", width=3, command=lambda: self._nudge_scale(self.contrast_scale, -10)).pack(side="left")
         self.contrast_scale = ttk.Scale(
-            frm,
+            con_row,
             from_=0,
             to=255,
             orient="horizontal",
@@ -138,7 +149,8 @@ class App(tk.Tk):
             style="Thick.Horizontal.TScale",
             length=360,
         )
-        self.contrast_scale.grid(row=9, column=0, columnspan=3, sticky="ew")
+        self.contrast_scale.pack(side="left", fill="x", expand=True)
+        ttk.Button(con_row, text="+", width=3, command=lambda: self._nudge_scale(self.contrast_scale, 10)).pack(side="left")
 
         # Contrast current value display
         self.contrast_label = ttk.Label(frm, text="128")
@@ -170,9 +182,12 @@ class App(tk.Tk):
 
         # Exposure Time slider
         ttk.Label(frm, text="Exposure Time").grid(row=13, column=0, columnspan=3, sticky="w", pady=(12,2))
-        self.exp_time_var = tk.IntVar(value=500)  # Default from example
+        self.exp_time_var = tk.IntVar(value=500)
+        exp_row = ttk.Frame(frm)
+        exp_row.grid(row=14, column=0, columnspan=3, sticky="ew")
+        ttk.Button(exp_row, text="−", width=3, command=lambda: self._nudge_scale(self.exp_time_scale, -10)).pack(side="left")
         self.exp_time_scale = ttk.Scale(
-            frm,
+            exp_row,
             from_=3,
             to=2047,
             orient="horizontal",
@@ -180,7 +195,8 @@ class App(tk.Tk):
             style="Thick.Horizontal.TScale",
             length=360,
         )
-        self.exp_time_scale.grid(row=14, column=0, columnspan=3, sticky="ew")
+        self.exp_time_scale.pack(side="left", fill="x", expand=True)
+        ttk.Button(exp_row, text="+", width=3, command=lambda: self._nudge_scale(self.exp_time_scale, 10)).pack(side="left")
 
         # Exposure Time current value display
         self.exp_time_label = ttk.Label(frm, text="500")
@@ -198,8 +214,11 @@ class App(tk.Tk):
         # Gain slider
         ttk.Label(frm, text="Gain").grid(row=17, column=0, columnspan=3, sticky="w", pady=(12,2))
         self.gain_var = tk.IntVar(value=0)
+        gain_row = ttk.Frame(frm)
+        gain_row.grid(row=18, column=0, columnspan=3, sticky="ew")
+        ttk.Button(gain_row, text="−", width=3, command=lambda: self._nudge_scale(self.gain_scale, -10)).pack(side="left")
         self.gain_scale = ttk.Scale(
-            frm,
+            gain_row,
             from_=0,
             to=255,
             orient="horizontal",
@@ -207,7 +226,8 @@ class App(tk.Tk):
             style="Thick.Horizontal.TScale",
             length=360,
         )
-        self.gain_scale.grid(row=18, column=0, columnspan=3, sticky="ew")
+        self.gain_scale.pack(side="left", fill="x", expand=True)
+        ttk.Button(gain_row, text="+", width=3, command=lambda: self._nudge_scale(self.gain_scale, 10)).pack(side="left")
 
         # Gain current value display
         self.gain_label = ttk.Label(frm, text="0")
@@ -572,6 +592,14 @@ class App(tk.Tk):
 
     def set_status(self, msg):
         self.status.configure(text=msg)
+
+    def _nudge_scale(self, scale, delta):
+        """Move a scale by delta, clamping to its range, and trigger its command."""
+        cur = float(scale.get())
+        lo = float(scale.cget("from"))
+        hi = float(scale.cget("to"))
+        new = max(lo, min(hi, cur + delta))
+        scale.set(new)
 
 if __name__ == "__main__":
     try:
