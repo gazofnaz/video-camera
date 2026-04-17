@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-import subprocess, sys, re, shutil, tkinter as tk
-from tkinter import ttk, messagebox
+import subprocess, sys, re, shutil, tkinter as tk, json, os
+from tkinter import ttk, messagebox, simpledialog
+from pathlib import Path
 
-# todo: make box wider and longer
-# todo: add zoom and sharpness controls
-# todo: add brightness controls
-# todo: on startup, set auto_whitebalance off if it's on, then set white_balance_temperature to current slider value
-# todo: add a refresh button to reset the above in case the camera was reloaded
-# todo: make saturation a switch for regular vs black-and-white mode
+PRESETS_DIR = Path(__file__).resolve().parent / "presets"
 
 DEFAULT_DEVICE = "/dev/video4"
 CTRL_NAME = "white_balance_temperature"
@@ -68,8 +64,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("V4L2 Control GUI")
-        self.geometry("640x560")  # Increased height for gain control
-        self.resizable(False, False)
+        self.geometry("640x800")
+        self.resizable(False, True)
         self.style = ttk.Style(self)
         # Larger slider handle to make grabbing easier with the mouse
         self.style.configure("Thick.Horizontal.TScale", sliderlength=32)
@@ -217,18 +213,154 @@ class App(tk.Tk):
         self.gain_label = ttk.Label(frm, text="0")
         self.gain_label.grid(row=19, column=0, columnspan=3, sticky="w", pady=(6,0))
 
+        # --- Presets section ---
+        preset_frame = ttk.LabelFrame(frm, text="Presets", padding=8)
+        preset_frame.grid(row=20, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+
+        ttk.Label(preset_frame, text="Preset:").grid(row=0, column=0, sticky="w")
+        self.preset_var = tk.StringVar()
+        self.preset_combo = ttk.Combobox(preset_frame, textvariable=self.preset_var, width=24, state="readonly")
+        self.preset_combo.grid(row=0, column=1, padx=(4, 0), sticky="w")
+
+        btn_frame = ttk.Frame(preset_frame)
+        btn_frame.grid(row=1, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        ttk.Button(btn_frame, text="Load", command=self.load_preset).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text="Save current", command=self.save_preset).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text="Save as…", command=self.save_preset_as).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text="Delete", command=self.delete_preset).pack(side="left")
+
         frm.columnconfigure(1, weight=1)
 
         # Status bar
         self.status = ttk.Label(self, text="", anchor="w", padding=(10, 4))
         self.status.pack(fill="x", side="bottom")
 
-        self._pending_apply = None  # for debouncing white balance slider
-        self._pending_sat_apply = None  # for debouncing saturation slider
-        self._pending_contrast_apply = None  # for debouncing contrast slider
-        self._pending_exp_time_apply = None  # for debouncing exposure time slider
-        self._pending_gain_apply = None  # for debouncing gain slider
+        self._pending_apply = None
+        self._pending_sat_apply = None
+        self._pending_contrast_apply = None
+        self._pending_exp_time_apply = None
+        self._pending_gain_apply = None
+        PRESETS_DIR.mkdir(exist_ok=True)
+        self._refresh_preset_list()
         self.load_device()
+
+    def _refresh_preset_list(self):
+        names = sorted(p.stem for p in PRESETS_DIR.glob("*.json"))
+        self.preset_combo["values"] = names
+        if names and not self.preset_var.get():
+            self.preset_var.set(names[0])
+
+    def _gather_settings(self):
+        return {
+            "white_balance_temperature": int(float(self.scale.get())),
+            "white_balance_automatic": self.auto_var.get(),
+            "saturation": int(float(self.sat_scale.get())),
+            "contrast": int(float(self.contrast_scale.get())),
+            "auto_exposure": self.exp_auto_var.get(),
+            "exposure_time_absolute": int(float(self.exp_time_scale.get())),
+            "exposure_dynamic_framerate": self.exp_dyn_fps_var.get(),
+            "gain": int(float(self.gain_scale.get())),
+        }
+
+    def _apply_settings(self, settings):
+        dev = self.dev_var.get().strip()
+        errors = []
+        # Apply auto controls first
+        if "white_balance_automatic" in settings:
+            v = settings["white_balance_automatic"]
+            rc, out, err = set_ctrl_bool(dev, AUTO_CTRL, v)
+            if rc == 0:
+                self.auto_var.set(v)
+                self.scale.state(["disabled"] if v else ["!disabled"])
+            else:
+                errors.append(f"{AUTO_CTRL}: {err or out}")
+
+        if "auto_exposure" in settings:
+            v = settings["auto_exposure"]
+            rc, out, err = set_ctrl(dev, AUTO_EXPOSURE_CTRL, v)
+            if rc == 0:
+                self.exp_auto_var.set(v)
+            else:
+                errors.append(f"{AUTO_EXPOSURE_CTRL}: {err or out}")
+
+        ctrl_map = [
+            ("white_balance_temperature", CTRL_NAME, self.scale, self.val_label, " K"),
+            ("saturation", SATURATION_CTRL, self.sat_scale, self.sat_label, ""),
+            ("contrast", CONTRAST_CTRL, self.contrast_scale, self.contrast_label, ""),
+            ("exposure_time_absolute", EXPOSURE_TIME_CTRL, self.exp_time_scale, self.exp_time_label, ""),
+            ("gain", GAIN_CTRL, self.gain_scale, self.gain_label, ""),
+        ]
+        for key, ctrl, scale_w, label_w, suffix in ctrl_map:
+            if key in settings:
+                v = settings[key]
+                rc, out, err = set_ctrl(dev, ctrl, v)
+                if rc == 0:
+                    scale_w.set(v)
+                    label_w.configure(text=f"{v}{suffix}")
+                else:
+                    errors.append(f"{ctrl}: {err or out}")
+
+        if "exposure_dynamic_framerate" in settings:
+            v = settings["exposure_dynamic_framerate"]
+            rc, out, err = set_ctrl_bool(dev, EXPOSURE_DYN_FPS_CTRL, v)
+            if rc == 0:
+                self.exp_dyn_fps_var.set(v)
+            else:
+                errors.append(f"{EXPOSURE_DYN_FPS_CTRL}: {err or out}")
+
+        if errors:
+            self.set_status(f"Preset applied with errors: {'; '.join(errors)}")
+        else:
+            self.set_status("Preset applied successfully")
+
+    def save_preset(self):
+        name = self.preset_var.get().strip()
+        if not name:
+            return self.save_preset_as()
+        path = PRESETS_DIR / f"{name}.json"
+        path.write_text(json.dumps(self._gather_settings(), indent=2))
+        self._refresh_preset_list()
+        self.preset_var.set(name)
+        self.set_status(f"Saved preset '{name}'")
+
+    def save_preset_as(self):
+        name = simpledialog.askstring("Save Preset", "Preset name:", parent=self)
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        path = PRESETS_DIR / f"{name}.json"
+        if path.exists():
+            if not messagebox.askyesno("Overwrite?", f"Preset '{name}' exists. Overwrite?"):
+                return
+        path.write_text(json.dumps(self._gather_settings(), indent=2))
+        self._refresh_preset_list()
+        self.preset_var.set(name)
+        self.set_status(f"Saved preset '{name}'")
+
+    def load_preset(self):
+        name = self.preset_var.get().strip()
+        if not name:
+            messagebox.showwarning("No preset", "Select a preset first.")
+            return
+        path = PRESETS_DIR / f"{name}.json"
+        if not path.exists():
+            messagebox.showerror("Not found", f"Preset file not found: {path}")
+            return
+        settings = json.loads(path.read_text())
+        self._apply_settings(settings)
+
+    def delete_preset(self):
+        name = self.preset_var.get().strip()
+        if not name:
+            return
+        if not messagebox.askyesno("Delete?", f"Delete preset '{name}'?"):
+            return
+        path = PRESETS_DIR / f"{name}.json"
+        if path.exists():
+            path.unlink()
+        self._refresh_preset_list()
+        self.preset_var.set("")
+        self.set_status(f"Deleted preset '{name}'")
 
     def load_device(self):
         dev = self.dev_var.get().strip()
